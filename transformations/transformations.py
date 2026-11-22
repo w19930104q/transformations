@@ -463,6 +463,13 @@ def rotation_matrix(angle, direction, point=None):
 def rotation_from_matrix(matrix):
     """Return rotation angle and axis from rotation matrix.
 
+    The matrix must represent a proper rotation, i.e. the determinant of
+    its 3x3 rotation part must be positive (close to 1). Matrices with a
+    negative determinant contain a reflection (improper rotation) and cannot
+    be represented as a single rotation about an axis; a ValueError is
+    raised for those. Use ``reflection_from_matrix`` to inspect the mirror
+    plane of a reflection matrix.
+
     >>> angle = (random.random() - 0.5) * (2 * math.pi)
     >>> direc = numpy.random.random(3) - 0.5
     >>> point = numpy.random.random(3) - 0.5
@@ -472,9 +479,43 @@ def rotation_from_matrix(matrix):
     >>> is_same_transform(R0, R1)
     True
 
+    A pure reflection matrix has a negative determinant and is rejected
+    instead of being misinterpreted as a rotation:
+
+    >>> F = numpy.diag([1.0, 1.0, -1.0, 1.0])
+    >>> rotation_from_matrix(F)
+    Traceback (most recent call last):
+    ...
+    ValueError: matrix contains a reflection (determinant is negative); \
+cannot extract a rotation about an axis
+
+    The same applies to an improper rotation (rotation combined with a
+    reflection):
+
+    >>> G = numpy.dot(F, rotation_matrix(1.2, [0.0, 0.0, 1.0]))
+    >>> rotation_from_matrix(G)
+    Traceback (most recent call last):
+    ...
+    ValueError: matrix contains a reflection (determinant is negative); \
+cannot extract a rotation about an axis
+
     """
     R = numpy.asarray(matrix, dtype=numpy.float64)
     R33 = R[:3, :3]
+    # a proper rotation has a positive determinant (close to 1);
+    # a negative determinant indicates a reflection (improper rotation),
+    # which has no representation as a single rotation about an axis
+    det = (
+        R33[0, 0] * (R33[1, 1] * R33[2, 2] - R33[1, 2] * R33[2, 1])
+        - R33[0, 1] * (R33[1, 0] * R33[2, 2] - R33[1, 2] * R33[2, 0])
+        + R33[0, 2] * (R33[1, 0] * R33[2, 1] - R33[1, 1] * R33[2, 0])
+    )
+    if det < 0.0:
+        msg = (
+            'matrix contains a reflection (determinant is negative); '
+            'cannot extract a rotation about an axis'
+        )
+        raise ValueError(msg)
     # direction: unit eigenvector of R33 corresponding to eigenvalue of 1
     w, W = numpy.linalg.eig(R33.T)
     i = numpy.where(abs(numpy.real(w) - 1.0) < 1e-8)[0]
