@@ -69,6 +69,14 @@ This revision was tested with the following requirements and dependencies
 Revisions
 ---------
 
+2026.11.23
+
+- Unify broadcasting and shape semantics of matrix and quaternion functions.
+- Raise ValueError for stacks (batches) and malformed shapes of single
+  matrices and quaternions instead of silently computing wrong results.
+- Support numpy.matmul broadcasting of stacked matrices in
+  concatenate_matrices.
+
 2026.8.8
 
 - Fix code review issues.
@@ -140,6 +148,15 @@ Calculations are carried out with numpy.float64 precision.
 
 Vector, point, quaternion, and matrix function arguments are expected to be
 "array like", i.e. tuple, list, or numpy arrays.
+
+Shape semantics: functions accepting a single transformation matrix require
+exactly shape (4, 4), and functions accepting a single quaternion require
+shape (4, ). The euler_from_matrix function also accepts a (3, 3) rotation
+matrix. Stacks (batches) of matrices or quaternions are rejected with a
+ValueError, except in the inverse_matrix and concatenate_matrices functions,
+which follow numpy.matmul broadcasting rules: inputs of shape (..., 4, 4)
+return arrays of the broadcast batch shape followed by (4, 4). Hence the
+shape of every return value is uniquely determined by the input shapes.
 
 Return types are numpy arrays unless specified otherwise.
 
@@ -351,7 +368,7 @@ def translation_from_matrix(matrix):
     True
 
     """
-    return numpy.asarray(matrix)[:3, 3].copy()
+    return _as_single(matrix, ((4, 4),), name='matrix')[:3, 3]
 
 
 def reflection_matrix(point, normal):
@@ -392,7 +409,7 @@ def reflection_from_matrix(matrix):
     True
 
     """
-    M = numpy.asarray(matrix, dtype=numpy.float64)
+    M = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix')
     # normal: unit eigenvector corresponding to eigenvalue -1
     w, V = numpy.linalg.eig(M[:3, :3])
     i = numpy.where(abs(numpy.real(w) + 1.0) < 1e-8)[0]
@@ -473,7 +490,7 @@ def rotation_from_matrix(matrix):
     True
 
     """
-    R = numpy.asarray(matrix, dtype=numpy.float64)
+    R = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix')
     R33 = R[:3, :3]
     # direction: unit eigenvector of R33 corresponding to eigenvalue of 1
     w, W = numpy.linalg.eig(R33.T)
@@ -560,7 +577,7 @@ def scale_from_matrix(matrix):
     True
 
     """
-    M = numpy.asarray(matrix, dtype=numpy.float64)
+    M = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix')
     M33 = M[:3, :3]
     factor = numpy.trace(M33) - 2.0
     try:
@@ -682,7 +699,7 @@ def projection_from_matrix(matrix, *, pseudo=False):
     True
 
     """
-    M = numpy.asarray(matrix, dtype=numpy.float64)
+    M = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix')
     M33 = M[:3, :3]
     w, V = numpy.linalg.eig(M)
     i = numpy.where(abs(numpy.real(w) - 1.0) < 1e-8)[0]
@@ -829,7 +846,7 @@ def shear_from_matrix(matrix):
     True
 
     """
-    M = numpy.asarray(matrix, dtype=numpy.float64)
+    M = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix')
     M33 = M[:3, :3]
     # normal: cross independent eigenvectors corresponding to the eigenvalue 1
     w, V = numpy.linalg.eig(M33)
@@ -893,7 +910,7 @@ def decompose_matrix(matrix):
     True
 
     """
-    M = numpy.array(matrix, dtype=numpy.float64, copy=True).T
+    M = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix').T
     if abs(M[3, 3]) < _EPS:
         msg = 'M[3, 3] is zero'
         raise ValueError(msg)
@@ -1301,7 +1318,7 @@ def euler_from_matrix(matrix, axes='sxyz'):
     j = _NEXT_AXIS[i + parity]
     k = _NEXT_AXIS[i - parity + 1]
 
-    M = numpy.asarray(matrix, dtype=numpy.float64)[:3, :3]
+    M = _as_single(matrix, ((3, 3), (4, 4)), numpy.float64, 'matrix')[:3, :3]
     if repetition:
         sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
         if sy > _EPS:
@@ -1428,7 +1445,7 @@ def quaternion_matrix(quaternion):
     True
 
     """
-    q = numpy.array(quaternion, dtype=numpy.float64, copy=True)
+    q = _as_single(quaternion, ((4,),), numpy.float64, 'quaternion')
     n = numpy.dot(q, q)
     if n < _EPS:
         return numpy.identity(4)
@@ -1510,7 +1527,7 @@ def quaternion_from_matrix(matrix, *, isprecise=False):
     True
 
     """
-    M = numpy.asarray(matrix, dtype=numpy.float64)[:4, :4]
+    M = _as_single(matrix, ((4, 4),), numpy.float64, 'matrix')
     if isprecise:
         q = numpy.empty((4,))
         t = numpy.trace(M)
@@ -1568,8 +1585,8 @@ def quaternion_multiply(quaternion1, quaternion0):
     True
 
     """
-    w0, x0, y0, z0 = quaternion0
-    w1, x1, y1, z1 = quaternion1
+    w0, x0, y0, z0 = _as_single(quaternion0, ((4,),), name='quaternion0')
+    w1, x1, y1, z1 = _as_single(quaternion1, ((4,),), name='quaternion1')
     return numpy.array(
         [
             -x1 * x0 - y1 * y0 - z1 * z0 + w1 * w0,
@@ -1590,7 +1607,7 @@ def quaternion_conjugate(quaternion):
     True
 
     """
-    q = numpy.array(quaternion, dtype=numpy.float64, copy=True)
+    q = _as_single(quaternion, ((4,),), numpy.float64, 'quaternion')
     numpy.negative(q[1:], q[1:])
     return q
 
@@ -1604,7 +1621,7 @@ def quaternion_inverse(quaternion):
     True
 
     """
-    q = numpy.array(quaternion, dtype=numpy.float64, copy=True)
+    q = _as_single(quaternion, ((4,),), numpy.float64, 'quaternion')
     numpy.negative(q[1:], q[1:])
     return q / numpy.dot(q, q)
 
@@ -1626,7 +1643,7 @@ def quaternion_imag(quaternion):
     array([0., 1., 2.])
 
     """
-    return numpy.array(quaternion[1:4], dtype=numpy.float64, copy=True)
+    return _as_single(quaternion, ((4,),), numpy.float64, 'quaternion')[1:4]
 
 
 def quaternion_slerp(quat0, quat1, fraction, spin=0, *, shortestpath=True):
@@ -1649,8 +1666,8 @@ def quaternion_slerp(quat0, quat1, fraction, spin=0, *, shortestpath=True):
     True
 
     """
-    q0 = unit_vector(quat0[:4])
-    q1 = unit_vector(quat1[:4])
+    q0 = unit_vector(_as_single(quat0, ((4,),), numpy.float64, 'quat0'))
+    q1 = unit_vector(_as_single(quat1, ((4,),), numpy.float64, 'quat1'))
     if fraction == 0.0:
         return q0
     if fraction == 1.0:
@@ -1912,6 +1929,25 @@ _AXES2TUPLE = {
 _TUPLE2AXES = {v: k for k, v in _AXES2TUPLE.items()}
 
 
+def _as_single(array, shapes, dtype=None, name='input'):
+    """Return array as a new ndarray after verifying it is a single array.
+
+    `shapes` is a tuple of allowed shapes, e.g. ((4, 4),) for a single
+    4x4 matrix or ((4,),) for a single quaternion.
+
+    Raise ValueError if the input has any other shape, such as a stack
+    (batch) of matrices or vectors. This guards against silently
+    broadcasting stacks of matrices into wrong results.
+
+    """
+    a = numpy.array(array, dtype=dtype, copy=True)
+    if a.shape not in shapes:
+        expected = ' or '.join(str(s) for s in shapes)
+        msg = f'{name} must have shape {expected}; got shape {a.shape}'
+        raise ValueError(msg)
+    return a
+
+
 def vector_norm(data, axis=None, *, out=None):
     """Return length, i.e. Euclidean norm, of ndarray along axis.
 
@@ -2073,6 +2109,9 @@ def angle_between_vectors(v0, v1, axis=0, *, directed=True):
 def inverse_matrix(matrix):
     """Return inverse of square transformation matrix.
 
+    Stacks (batches) of matrices of shape (..., n, n) are inverted
+    according to numpy.linalg.inv broadcasting rules.
+
     >>> M0 = random_rotation_matrix()
     >>> M1 = inverse_matrix(M0.T)
     >>> numpy.allclose(M1, numpy.linalg.inv(M0.T))
@@ -2083,6 +2122,8 @@ def inverse_matrix(matrix):
     ...     if not numpy.allclose(M1, numpy.linalg.inv(M0)):
     ...         print(size)
     ...
+    >>> inverse_matrix(numpy.random.rand(3, 4, 4)).shape
+    (3, 4, 4)
 
     """
     return numpy.linalg.inv(matrix)
@@ -2091,16 +2132,24 @@ def inverse_matrix(matrix):
 def concatenate_matrices(*matrices):
     """Return concatenation of series of transformation matrices.
 
+    Matrices are multiplied using numpy.matmul. Stacks (batches) of
+    matrices of shape (..., 4, 4) follow numpy broadcasting rules and
+    return an array of the broadcast batch shape followed by (4, 4).
+
     >>> M = numpy.random.rand(16).reshape((4, 4)) - 0.5
     >>> numpy.allclose(M, concatenate_matrices(M))
     True
     >>> numpy.allclose(numpy.dot(M, M.T), concatenate_matrices(M, M.T))
     True
+    >>> A = numpy.random.rand(5, 4, 4)
+    >>> B = concatenate_matrices(A, M)
+    >>> B.shape == (5, 4, 4) and numpy.allclose(B, A @ M)
+    True
 
     """
     M = numpy.identity(4)
     for i in matrices:
-        M = numpy.dot(M, i)
+        M = numpy.matmul(M, i)
     return M
 
 
@@ -2113,17 +2162,17 @@ def is_same_transform(matrix0, matrix1):
     False
 
     """
-    matrix0 = numpy.array(matrix0, dtype=numpy.float64, copy=True)
+    matrix0 = _as_single(matrix0, ((4, 4),), numpy.float64, 'matrix0')
     matrix0 /= matrix0[3, 3]
-    matrix1 = numpy.array(matrix1, dtype=numpy.float64, copy=True)
+    matrix1 = _as_single(matrix1, ((4, 4),), numpy.float64, 'matrix1')
     matrix1 /= matrix1[3, 3]
     return numpy.allclose(matrix0, matrix1)
 
 
 def is_same_quaternion(q0, q1):
     """Return True if two quaternions are equal."""
-    q0 = numpy.array(q0)
-    q1 = numpy.array(q1)
+    q0 = _as_single(q0, ((4,),), name='q0')
+    q1 = _as_single(q1, ((4,),), name='q1')
     return numpy.allclose(q0, q1) or numpy.allclose(q0, -q1)
 
 

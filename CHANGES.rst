@@ -1,6 +1,14 @@
 Revisions
 ---------
 
+2026.11.23
+
+- Unify broadcasting and shape semantics of matrix and quaternion functions.
+- Raise ValueError for stacks (batches) and malformed shapes of single
+  matrices and quaternions instead of silently computing wrong results.
+- Support numpy.matmul broadcasting of stacked matrices in
+  concatenate_matrices.
+
 2026.8.8
 
 - Fix code review issues.
