@@ -82,6 +82,25 @@ Refer to the transformations.py module for documentation and tests.\n\
 /* C helper functions */
 
 /*
+Wrap an Euler angle to the canonical principal-value range (-pi, pi].
+Angles equal to +/- pi are returned as +pi and negative zero as +0.0, so
+that equivalent angles always compare equal. Must match
+_principal_angle() in transformations.py.
+*/
+static double
+principal_angle(double angle)
+{
+    /* fmod here behaves like Python's % for values in (-2*pi, 2*pi),
+       which is the whole range returned by atan2 */
+    angle = fmod(angle + M_PI, TWOPI) - M_PI;
+    if (angle == -M_PI)
+        return M_PI;
+    if (angle == 0.0)
+        return 0.0;
+    return angle;
+}
+
+/*
 Return random doubles in half-open interval [0.0, 1.0).
 Uses /dev/urandom or BCryptGenRandom. Not very fast but random.
 Assumes sizeof(double) == 2*sizeof(unsigned int).
@@ -2397,7 +2416,12 @@ static int axis2tuple(
 Matrix from Euler angles.
 */
 static char py_euler_matrix_doc[] =
-    "Return homogeneous rotation matrix from Euler angles and axis sequence.";
+    "Return homogeneous rotation matrix from Euler angles and axis "
+    "sequence.\n\n"
+    "Angles are in radians and follow the right-hand rule. The default "
+    "axes 'sxyz' applies intrinsic rotations about the static x, y, z "
+    "axes, giving R = Rz(ak) @ Ry(aj) @ Rx(ai) on column vectors. See "
+    "the transformations.euler_matrix docstring for details.";
 
 static PyObject *
 py_euler_matrix(
@@ -2511,7 +2535,14 @@ _fail:
 Euler angles from matrix.
 */
 static char py_euler_from_matrix_doc[] =
-    "Return Euler angles from rotation matrix for specified axis sequence.";
+    "Return Euler angles from rotation matrix for specified axis "
+    "sequence.\n\n"
+    "Angles are in radians and follow the right-hand rule. First and "
+    "third angles are in (-pi, pi]; the second angle is in [-pi/2, "
+    "pi/2] for Tait-Bryan sequences, [0, pi] for even-parity proper "
+    "Euler sequences or [-pi, 0] for odd-parity ones. At a "
+    "gimbal-lock singularity the third angle is 0. See the "
+    "transformations.euler_from_matrix docstring for details.";
 
 static PyObject *
 py_euler_from_matrix(
@@ -2560,7 +2591,8 @@ py_euler_from_matrix(
             x = M[4 * i + j];
             y = M[4 * i + k];
             t = sqrt(x * x + y * y);
-            if (t > EPSILON) {
+            /* regular formulas unless the term is exactly zero */
+            if (t > 0.0) {
                 ai = atan2(M[4 * i + j],  M[4 * i + k]);
                 aj = atan2(t,         M[4 * i + i]);
                 ak = atan2(M[4 * j + i], -M[4 * k + i]);
@@ -2574,7 +2606,8 @@ py_euler_from_matrix(
             x = M[4 * i + i];
             y = M[4 * j + i];
             t = sqrt(x * x + y * y);
-            if (t > EPSILON) {
+            /* regular formulas unless the term is exactly zero */
+            if (t > 0.0) {
                 ai = atan2(M[4 * k + j],  M[4 * k + k]);
                 aj = atan2(-M[4 * k + i],  t);
                 ak = atan2(M[4 * j + i],  M[4 * i + i]);
@@ -2594,6 +2627,11 @@ py_euler_from_matrix(
             ai = ak;
             ak = t;
         }
+
+        /* canonical principal-value ranges, matching euler_from_matrix */
+        ai = principal_angle(ai);
+        aj = principal_angle(aj);
+        ak = principal_angle(ak);
     }
 
     Py_XDECREF(axes);
@@ -2610,7 +2648,10 @@ _fail:
 Quaternion from Euler angles.
 */
 static char py_quaternion_from_euler_doc[] =
-    "Return quaternion from Euler angles and axis sequence.";
+    "Return quaternion from Euler angles and axis sequence.\n\n"
+    "Angles are in radians and use the same axis sequence and "
+    "right-hand-rule sign conventions as euler_matrix. See the "
+    "transformations.quaternion_from_euler docstring for details.";
 
 static PyObject *
 py_quaternion_from_euler(

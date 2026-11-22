@@ -163,6 +163,26 @@ be specified using a 4 character string or encoded 4-tuple:
   - repetition : first and last axis are same (1) or different (0).
   - frame : rotations are applied to static (0) or rotating (1) frame.
 
+All four Euler conversion functions (``euler_matrix``,
+``euler_from_matrix``, ``quaternion_from_euler`` and
+``euler_from_quaternion``) use the same conventions and default to
+``axes='sxyz'``:
+
+  - Angles are in radians. Positive angles rotate counter-clockwise about
+    the rotation axis when looking along the axis toward the origin
+    (right-hand rule).
+  - For a static ('s') frame the angles are intrinsic rotations applied
+    about the fixed x, y, z axes in the order given, e.g. 'sxyz' results
+    in ``R = Rz(ak) @ Ry(aj) @ Rx(ai)`` on column vectors.
+  - The inverse functions return canonical principal-value angles:
+    first and third angles in (-pi, pi]; second angle in [-pi/2, pi/2] for
+    Tait-Bryan sequences (first and last axes differ), in [0, pi] for
+    even-parity proper Euler sequences or in [-pi, 0] for odd-parity
+    proper Euler sequences (first and last axes are equal).
+  - At a gimbal-lock singularity the third angle is undetermined and is
+    returned as 0; the first angle then represents the full remaining
+    rotation.
+
 References
 ----------
 
@@ -1208,8 +1228,22 @@ def superimposition_matrix(v0, v1, *, scale=False, usesvd=True):
 def euler_matrix(ai, aj, ak, axes='sxyz'):
     """Return homogeneous rotation matrix from Euler angles and axis sequence.
 
-    ai, aj, ak : Euler's roll, pitch and yaw angles
-    axes : One of 24 axis sequences as string or encoded tuple
+    ai, aj, ak : Euler's roll, pitch and yaw angles in radians. Positive
+        angles rotate counter-clockwise about the rotation axis when looking
+        along the axis toward the origin, i.e. rotations follow the
+        right-hand rule.
+    axes : One of 24 axis sequences as string or encoded tuple (see module
+        docstring). The default 'sxyz' means intrinsic rotations about the
+        static x, then y, then z axes: the result is
+        ``R = Rz(ak) @ Ry(aj) @ Rx(ai)`` applied to column vectors.
+
+    The axis sequence and sign conventions are shared by ``euler_matrix``,
+    ``euler_from_matrix``, ``quaternion_from_euler`` and
+    ``euler_from_quaternion``. Converting a matrix back with
+    ``euler_from_matrix(R, axes)`` returns principal-value angles (first
+    and third angles in (-pi, pi], second angle in [-pi/2, pi/2] for
+    Tait-Bryan sequences, [0, pi] for even-parity proper Euler sequences
+    or [-pi, 0] for odd-parity ones) that reconstruct the same matrix.
 
     >>> R = euler_matrix(1, 2, 3, 'syxz')
     >>> numpy.allclose(numpy.sum(R[0]), -1.34786452)
@@ -1273,9 +1307,32 @@ def euler_matrix(ai, aj, ak, axes='sxyz'):
 def euler_from_matrix(matrix, axes='sxyz'):
     """Return Euler angles from rotation matrix for specified axis sequence.
 
-    axes : One of 24 axis sequences as string or encoded tuple
+    axes : One of 24 axis sequences as string or encoded tuple (see module
+        docstring). The default 'sxyz' means intrinsic rotations about the
+        static x, then y, then z axes.
 
-    Note that many Euler angle triplets can describe one matrix.
+    Angles are in radians. Positive angles rotate counter-clockwise about
+    the rotation axis when looking along the axis toward the origin, i.e.
+    rotations follow the right-hand rule.
+
+    The returned angles are reduced to canonical principal-value ranges,
+    which are identical for all four Euler conversion functions:
+
+    - first and third angles: (-pi, pi]
+    - second angle, Tait-Bryan sequences (first and last axes differ,
+      e.g. 'sxyz'): [-pi/2, pi/2]
+    - second angle, proper Euler sequences (first and last axes are equal,
+      e.g. 'sxyx'): [0, pi] for even-parity sequences and [-pi, 0] for
+      odd-parity sequences
+
+    Note that many Euler angle triplets can describe one matrix. At a
+    gimbal-lock singularity the third angle cannot be determined and is
+    conventionally returned as 0; the first angle then carries the full
+    remaining rotation. The regular ``atan2`` formulas are used whenever
+    the relevant rotation term is non-zero; the degenerate branch is only
+    taken when it is exactly zero, so the returned angles vary
+    continuously with the matrix up to the intrinsic branch change of the
+    inverse trigonometric functions.
 
     >>> R0 = euler_matrix(1, 2, 3, 'syxz')
     >>> al, be, ga = euler_from_matrix(R0, 'syxz')
@@ -1304,7 +1361,7 @@ def euler_from_matrix(matrix, axes='sxyz'):
     M = numpy.asarray(matrix, dtype=numpy.float64)[:3, :3]
     if repetition:
         sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
-        if sy > _EPS:
+        if sy > 0.0:
             ax = math.atan2(M[i, j], M[i, k])
             ay = math.atan2(sy, M[i, i])
             az = math.atan2(M[j, i], -M[k, i])
@@ -1314,7 +1371,7 @@ def euler_from_matrix(matrix, axes='sxyz'):
             az = 0.0
     else:
         cy = math.sqrt(M[i, i] * M[i, i] + M[j, i] * M[j, i])
-        if cy > _EPS:
+        if cy > 0.0:
             ax = math.atan2(M[k, j], M[k, k])
             ay = math.atan2(-M[k, i], cy)
             az = math.atan2(M[j, i], M[i, i])
@@ -1327,11 +1384,22 @@ def euler_from_matrix(matrix, axes='sxyz'):
         ax, ay, az = -ax, -ay, -az
     if frame:
         ax, az = az, ax
-    return ax, ay, az
+    return (
+        _principal_angle(ax),
+        _principal_angle(ay),
+        _principal_angle(az),
+    )
 
 
 def euler_from_quaternion(quaternion, axes='sxyz'):
     """Return Euler angles from quaternion for specified axis sequence.
+
+    The angles are in radians, follow the right-hand rule and are returned
+    in the same canonical principal-value ranges as
+    ``euler_from_matrix``: first and third angles in (-pi, pi], second
+    angle in [-pi/2, pi/2] (Tait-Bryan sequences), [0, pi] (even-parity
+    proper Euler sequences) or [-pi, 0] (odd-parity proper Euler
+    sequences). At a gimbal-lock singularity the third angle is 0.
 
     >>> angles = euler_from_quaternion([0.99810947, 0.06146124, 0, 0])
     >>> numpy.allclose(angles, [0.123, 0, 0])
@@ -1344,8 +1412,16 @@ def euler_from_quaternion(quaternion, axes='sxyz'):
 def quaternion_from_euler(ai, aj, ak, axes='sxyz'):
     """Return quaternion from Euler angles and axis sequence.
 
-    ai, aj, ak : Euler's roll, pitch and yaw angles
-    axes : One of 24 axis sequences as string or encoded tuple
+    ai, aj, ak : Euler's roll, pitch and yaw angles in radians, using the
+        same axis sequence and right-hand-rule sign conventions as
+        ``euler_matrix``.
+    axes : One of 24 axis sequences as string or encoded tuple (see module
+        docstring). The default 'sxyz' means intrinsic rotations about the
+        static x, then y, then z axes.
+
+    The returned quaternion is identical (within floating point precision)
+    to ``quaternion_matrix`` applied to ``euler_matrix`` with the same
+    arguments.
 
     >>> q = quaternion_from_euler(1, 2, 3, 'ryxz')
     >>> numpy.allclose(q, [0.435953, 0.310622, -0.718287, 0.444435])
@@ -1877,6 +1953,26 @@ def arcball_nearest_axis(point, axes):
 
 # epsilon for testing whether a number is close to zero
 _EPS = numpy.finfo(float).eps * 4.0
+
+# two times pi
+_TWO_PI = 2.0 * math.pi
+
+
+def _principal_angle(angle):
+    """Return angle wrapped to the principal range (-pi, pi].
+
+    Angles exactly equal to +/- pi are returned as +pi. Negative zero is
+    returned as positive zero so that equivalent angles compare equal.
+
+    """
+    angle = (angle + math.pi) % _TWO_PI - math.pi
+    # modulo maps +/- pi to -pi, which is outside the canonical range
+    if angle == -math.pi:
+        return math.pi
+    if angle == 0.0:
+        return 0.0
+    return angle
+
 
 # axis sequences for Euler angles
 _NEXT_AXIS = [1, 2, 0, 1]

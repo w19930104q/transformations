@@ -1,6 +1,23 @@
 Revisions
 ---------
 
+Unreleased
+
+- Define and document consistent Euler angle conventions across
+  ``euler_matrix``, ``euler_from_matrix``, ``quaternion_from_euler`` and
+  ``euler_from_quaternion``: default 'sxyz' axis sequence, radian
+  right-hand-rule sign convention and canonical principal-value ranges
+  (first/third angles in (-pi, pi]; second angle in [-pi/2, pi/2] for
+  Tait-Bryan sequences, [0, pi] or [-pi, 0] for proper Euler sequences).
+- Return principal-value angles from the inverse Euler conversions,
+  removing spurious 2*pi jumps and negative-zero outputs.
+- Use the regular ``atan2`` formulas unless the gimbal-lock pivot term is
+  exactly zero, avoiding an artificial threshold discontinuity near
+  singularities while keeping the degenerate branch for truly singular
+  matrices.
+- Add fixed-angle tests covering all 24 axis sequences, both the Python
+  and C implementations.
+
 2026.8.8
 
 - Fix code review issues.
